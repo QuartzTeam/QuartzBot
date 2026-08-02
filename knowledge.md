@@ -28,10 +28,10 @@ A: An all-in-one mod for the rhythm game *A Dance of Fire and Ice* (ADOFAI). It 
 A: koren and sbrothers7 (and more contributors). It's a v2 rewrite of koren's original "KorenResourcePack".
 
 **Q: What version is it / is it stable?**
-A: v2.0.0, currently in alpha (alpha 66 at time of writing. but do not use this build number dependently. ask the user.). Expect bugs and changes.
+A: v2.0.0, currently in both alpha and beta. Expect bugs and frequent updates.
 
 **Q: Where do I download it?**
-A: GitHub releases: https://github.com/QuartzTeam/Quartz/releases/latest
+A: GitHub releases: https://github.com/PrismMods/Quartz/releases
 
 **Q: Is it free?**
 A: Yes. It's open source on GitHub with the GPL-3.0 license.
