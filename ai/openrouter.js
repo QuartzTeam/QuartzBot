@@ -45,8 +45,8 @@ class OpenRouterClient {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${this.apiKey}`,
                 // Optional attribution headers OpenRouter recommends.
-                "HTTP-Referer": "https://github.com/QuartzTeam/QuartzBot",
-                "X-Title": "Quartz Bot",
+                "HTTP-Referer": "https://github.com/PrismMods/PrismBot",
+                "X-Title": "PrismAI",
             },
             body: JSON.stringify(payload),
             signal: AbortSignal.timeout(120_000),

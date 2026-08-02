@@ -1,59 +1,68 @@
+require("dotenv").config();
 const express = require("express");
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 
-const config = require("./lib/config");
-const { Store } = require("./lib/store");
-const { OpenRouterClient } = require("./lib/openrouter");
-const { ChatHandler } = require("./lib/chat");
-const releases = require("./lib/releases");
+const releases = require("./announcer/releases");
+const aiConfig = require("./ai/config");
+const { Store } = require("./ai/store");
+const { OpenRouterClient } = require("./ai/openrouter");
+const { ChatHandler } = require("./ai/chat");
 
-const cfg = config.load();
+// Two Discord applications, one process. PrismBot owns the release
+// announcements (and every message already posted, so its token must stay the
+// original application's); PrismAI is a separate application with its own
+// token so the two identities are distinct in the member list.
+const announcerToken = process.env.ANNOUNCER_TOKEN;
+if (!announcerToken) throw new Error("ANNOUNCER_TOKEN is not set");
 
-// The AI side needs the privileged MESSAGE CONTENT intent (enable it in the
-// Discord developer portal); release-only mode sticks to Guilds so the bot
-// still logs in without it.
-const intents = cfg.aiEnabled
-    ? [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.MessageContent,
-    ]
-    : [GatewayIntentBits.Guilds];
+const announcerCfg = {
+    channelId: process.env.DISCORD_CHANNEL_ID,
+    githubSecret: process.env.GITHUB_WEBHOOK_SECRET,
+};
 
-const client = new Client({
-    intents,
-    partials: [Partials.Channel], // needed to receive DMs
-});
+// Guilds is enough to post and to receive button interactions — the announcer
+// never reads message content.
+const announcer = new Client({ intents: [GatewayIntentBits.Guilds] });
+announcer.once("ready", () => console.log(`Announcer logged in as ${announcer.user.tag}`));
+announcer.on("interactionCreate", releases.handleLanguageButton);
 
+const aiCfg = aiConfig.load();
+const aiToken = process.env.AI_TOKEN;
+// The AI side needs its own token plus OpenRouter and Postgres; without them
+// the process still runs, but only announces releases.
+const aiEnabled = Boolean(aiToken && aiCfg.openRouterKey && aiCfg.databaseUrl);
+
+let ai = null;
 let db = null;
-let chat = null;
-if (cfg.aiEnabled) {
-    db = new Store(cfg.databaseUrl);
-    chat = new ChatHandler(cfg, new OpenRouterClient(cfg.openRouterKey, cfg.openRouterModel), db);
-} else {
-    console.warn("AI chat disabled: set OPENROUTER_API_KEY and DATABASE_URL to enable it");
-}
-
-client.once("ready", () => {
-    console.log(`Logged in as ${client.user.tag}`);
-});
-
-client.on("interactionCreate", releases.handleLanguageButton);
-
-if (chat) {
-    client.on("messageCreate", (message) => {
-        chat.handle(client, message).catch(err => console.error("chat error:", err));
+if (aiEnabled) {
+    db = new Store(aiCfg.databaseUrl);
+    const chat = new ChatHandler(aiCfg, new OpenRouterClient(aiCfg.openRouterKey, aiCfg.openRouterModel), db);
+    ai = new Client({
+        // Chat needs the privileged MESSAGE CONTENT intent (enable it in the
+        // Discord developer portal on the PrismAI application, not PrismBot's).
+        intents: [
+            GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.DirectMessages,
+            GatewayIntentBits.MessageContent,
+        ],
+        partials: [Partials.Channel], // needed to receive DMs
     });
+    ai.once("ready", () => console.log(`PrismAI logged in as ${ai.user.tag}`));
+    ai.on("messageCreate", (message) => {
+        chat.handle(ai, message).catch(err => console.error("chat error:", err));
+    });
+} else {
+    console.warn("AI chat disabled: set AI_TOKEN, OPENROUTER_API_KEY and DATABASE_URL to enable it");
 }
 
 const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // Health endpoint — point an uptime pinger here to keep Render's free tier
-// from spinning the service (and the Discord connection) down.
-app.get("/", (req, res) => res.send("QuartzBot is up"));
-app.post("/webhook", releases.webhookHandler(client, cfg));
+// from spinning the service (and both Discord connections) down.
+app.get("/", (req, res) => res.send("PrismBot is up"));
+app.post("/webhook", releases.webhookHandler(announcer, announcerCfg));
 
 const PORT = process.env.PORT || 3000;
 
@@ -68,12 +77,14 @@ async function main() {
         }).on("error", reject);
     });
     if (db) await db.init();
-    await client.login(cfg.discordToken);
+    await announcer.login(announcerToken);
+    if (ai) await ai.login(aiToken);
 }
 
 async function shutdown() {
     console.log("shutting down.");
-    await client.destroy().catch(() => {});
+    await announcer.destroy().catch(() => {});
+    if (ai) await ai.destroy().catch(() => {});
     if (db) await db.close().catch(() => {});
     process.exit(0);
 }

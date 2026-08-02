@@ -1,10 +1,11 @@
 {
-    "name": "quartz-bot",
-    "version": "2.0.0",
-    "description": "Quartz Discord bot: GitHub release announcements + AI chat (OpenRouter + Postgres)",
+    "name": "prismbot",
+    "version": "3.0.0",
+    "description": "PrismBot (multi-repo GitHub release announcements) + PrismAI chat (OpenRouter + Postgres), two Discord apps in one process",
     "main": "index.js",
     "scripts": {
-        "start": "node index.js"
+        "start": "node index.js",
+        "test": "node --test"
     },
     "engines": {
         "node": ">=18"

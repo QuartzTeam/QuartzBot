@@ -11,6 +11,15 @@ const {
 const ROLE_ID = "1501202364302889142";
 const PRERELEASE_ROLE_ID = "1520786654238081094";
 
+// Friendly names for assets we know by filename. Anything not listed here —
+// including every asset from a repo other than Quartz — falls back to its own
+// filename, so a new repo needs no code change to announce correctly.
+const ASSET_LABELS = {
+    "Quartz.zip": "MelonLoader",
+    "QuartzUmm.zip": "UMM",
+    "Bismuth.zip": "UMM",
+};
+
 const STRINGS = {
     en: {
         prerelease: "🧪 New Pre-release!",
@@ -18,6 +27,7 @@ const STRINGS = {
         download: "📦 **Download**",
         changelog: "📋 **Changelog**",
         noChangelog: "No changelog provided.",
+        noAssets: "No downloadable files in this release.",
         toggleLabel: "한국어",
     },
     ko: {
@@ -26,6 +36,7 @@ const STRINGS = {
         download: "📦 **다운로드**",
         changelog: "📋 **변경 사항**",
         noChangelog: "변경 사항이 없습니다.",
+        noAssets: "이 릴리스에는 다운로드 파일이 없습니다.",
         toggleLabel: "English",
     },
 };
@@ -98,7 +109,7 @@ async function getRelease(repoFullName, tag) {
     const key = cacheKey(repoFullName, tag);
     if (releaseCache.has(key)) return releaseCache.get(key);
 
-    const headers = { "User-Agent": "QuartzBot", Accept: "application/vnd.github+json" };
+    const headers = { "User-Agent": "PrismBot", Accept: "application/vnd.github+json" };
     // Unauthenticated GitHub API limits are per-IP and shared with every
     // other tenant on the host; a token gets a dedicated 5000/hr.
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -119,8 +130,7 @@ function buildReleaseMessage(release, repoFullName, lang) {
     const t = STRINGS[lang];
     const changelog = (lang === "ko" ? ko : en) || ko || t.noChangelog;
 
-    const melonAsset = release.assets?.find(a => a.name === "Quartz.zip");
-    const ummAsset = release.assets?.find(a => a.name === "QuartzUmm.zip");
+    const assets = release.assets ?? [];
 
     const title =
         `## ${release.prerelease ? t.prerelease : t.release}\n` +
@@ -128,8 +138,9 @@ function buildReleaseMessage(release, repoFullName, lang) {
 
     const downloads =
         `${t.download}\n` +
-        (melonAsset ? `\`${melonAsset.name}\` — MelonLoader\n` : "") +
-        (ummAsset ? `\`${ummAsset.name}\` — UMM\n` : "");
+        (assets.length
+            ? assets.map(a => `\`${a.name}\`${ASSET_LABELS[a.name] ? ` — ${ASSET_LABELS[a.name]}` : ""}\n`).join("")
+            : `${t.noAssets}\n`);
 
     const publishedAt = Math.floor(new Date(release.published_at).getTime() / 1000);
 
@@ -162,20 +173,15 @@ function buildReleaseMessage(release, repoFullName, lang) {
         .addTextDisplayComponents(td => td.setContent(`-# ${repoName} > JRP • <t:${publishedAt}:f>`));
 
     const buttons = new ActionRowBuilder().addComponents(
-        ...(melonAsset ? [
+        // ponytail: 4-asset cap — Discord allows 5 buttons per row and the
+        // GitHub link takes one. Paginate if a repo ever ships more.
+        ...assets.slice(0, 4).map(a =>
             new ButtonBuilder()
-                .setLabel("Download (MelonLoader)")
+                .setLabel(truncate(`Download (${ASSET_LABELS[a.name] ?? a.name})`, 80))
                 .setEmoji("⬇️")
                 .setStyle(ButtonStyle.Link)
-                .setURL(melonAsset.browser_download_url)
-        ] : []),
-        ...(ummAsset ? [
-            new ButtonBuilder()
-                .setLabel("Download (UMM)")
-                .setEmoji("⬇️")
-                .setStyle(ButtonStyle.Link)
-                .setURL(ummAsset.browser_download_url)
-        ] : []),
+                .setURL(a.browser_download_url)
+        ),
         new ButtonBuilder()
             .setLabel("View on GitHub")
             .setEmoji("🔗")
@@ -253,9 +259,9 @@ async function handleLanguageButton(interaction) {
             flags: MessageFlags.Ephemeral,
         };
         if (interaction.deferred || interaction.replied) {
-            await interaction.followUp(apology).catch(() => {});
+            await interaction.followUp(apology).catch(() => { });
         } else {
-            await interaction.reply(apology).catch(() => {});
+            await interaction.reply(apology).catch(() => { });
         }
     }
 }

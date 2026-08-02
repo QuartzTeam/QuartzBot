@@ -4,7 +4,7 @@ const path = require("path");
 
 // The safety block is required: it keeps the bot inside Discord's Terms of
 // Service and Community Guidelines and away from any minor-related content.
-const defaultSystemPrompt = `You are the Quartz support bot in the Quartz Discord server. You answer
+const defaultSystemPrompt = `You are PrismAI, the PrismMods support bot. You answer
 questions about the Quartz mod; you are not a general chat companion. Follow the
 "How to Answer" rules in the knowledge base exactly: question-and-answer only,
 decline unrelated questions in one short sentence, and keep answers brief.
@@ -29,9 +29,6 @@ function intEnv(key, def) {
 
 function load() {
     const cfg = {
-        discordToken: process.env.DISCORD_TOKEN,
-        channelId: process.env.DISCORD_CHANNEL_ID,
-        githubSecret: process.env.GITHUB_WEBHOOK_SECRET,
         openRouterKey: process.env.OPENROUTER_API_KEY,
         openRouterModel: process.env.OPENROUTER_MODEL || "nousresearch/hermes-3-llama-3.1-405b:free",
         databaseUrl: process.env.DATABASE_URL,
@@ -40,14 +37,6 @@ function load() {
         summaryEvery: intEnv("SUMMARY_EVERY", 20),
         knowledge: "",
     };
-
-    if (!cfg.discordToken) {
-        throw new Error("DISCORD_TOKEN is not set");
-    }
-
-    // The AI side needs OpenRouter + Postgres; without them the bot still
-    // runs, but only announces releases.
-    cfg.aiEnabled = Boolean(cfg.openRouterKey && cfg.databaseUrl);
 
     // Optional knowledge base (FAQ the bot reads to answer questions).
     const knowledgePath = process.env.KNOWLEDGE_FILE || path.join(__dirname, "..", "knowledge.md");
