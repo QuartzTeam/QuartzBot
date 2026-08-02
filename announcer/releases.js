@@ -8,8 +8,22 @@ const {
     TextDisplayBuilder,
 } = require("discord.js");
 
-const ROLE_ID = "1501202364302889142";
-const PRERELEASE_ROLE_ID = "1520786654238081094";
+// Accent colour ramps by how finished a build is: orange for alpha, yellow for
+// beta, blurple for stable.
+const ACCENT = {
+    alpha: 0xffa500,
+    beta: 0xfee75c,
+    stable: 0x5865f2,
+};
+
+// Prereleases are tagged by track — v2.0.0-alpha-103, v2.0.0-beta-1, and the
+// rolling latest-alpha / latest-beta pointers — so the tag says which one a
+// build is on. A prerelease naming neither track keeps the alpha colour: an
+// unfamiliar repo's prerelease is at least as unfinished as an alpha.
+function releaseTrack(release) {
+    if (!release.prerelease) return "stable";
+    return /beta/i.test(release.tag_name || "") ? "beta" : "alpha";
+}
 
 // Friendly names for assets we know by filename. Anything not listed here —
 // including every asset from a repo other than Quartz — falls back to its own
@@ -97,6 +111,97 @@ function truncate(text, max) {
     return text.length > max ? text.slice(0, max - 1) + "…" : text;
 }
 
+const DOWNLOAD_HEADING = /^#{1,6}\s*(?:Download|다운로드)\s*:?\s*$/i;
+const ANY_HEADING = /^#{1,6}\s/;
+
+// The bot builds its own download block and buttons from the release assets,
+// so a "## Download" section in the notes says the same thing twice — and says
+// it worse, since its "the other files below" line points at a GitHub asset
+// list the Discord message doesn't have. Drop the heading and everything under
+// it, stopping at the next heading or "---" divider. A divider that ends the
+// section goes too, so the changelog doesn't open on a stray rule.
+function stripDownloadSection(md) {
+    const lines = md.split("\n");
+    const out = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        if (!DOWNLOAD_HEADING.test(lines[i])) {
+            out.push(lines[i]);
+            continue;
+        }
+        i++;
+        while (i < lines.length && !ANY_HEADING.test(lines[i]) && !DIVIDER.test(lines[i])) i++;
+        if (i < lines.length && DIVIDER.test(lines[i])) i++;
+        i--; // the loop's i++ lands on the boundary line, which is kept
+    }
+
+    return out.join("\n").replace(/^\s+/, "");
+}
+
+// A GFM delimiter row: "|---|---|", "| :--- | ---: |". Its presence directly
+// under a pipe line is what makes that line a table header rather than prose
+// that happens to contain a pipe.
+const TABLE_DELIM = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/;
+
+function tableCells(line) {
+    return line.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+}
+
+// Discord renders no markdown tables — a pipe table arrives as literal pipes
+// and delimiter dashes. Flatten each table into lines instead: the header
+// becomes a bold lead-in (skipped when the table is headerless, which is how
+// the Quartz release notes lay out downloads) and every row becomes a bullet
+// with its cells joined by an em dash.
+function flattenTables(md) {
+    const lines = md.split("\n");
+    const out = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const startsTable = lines[i].includes("|")
+            && i + 1 < lines.length
+            && TABLE_DELIM.test(lines[i + 1]);
+
+        if (!startsTable) {
+            out.push(lines[i]);
+            continue;
+        }
+
+        const header = tableCells(lines[i]).filter(Boolean);
+        if (header.length) out.push(header.map(h => `**${h}**`).join(" — "));
+
+        i++; // consume the delimiter row
+        while (i + 1 < lines.length && lines[i + 1].includes("|")) {
+            i++;
+            const row = tableCells(lines[i]).filter(Boolean);
+            if (row.length) out.push(`- ${row.join(" — ")}`);
+        }
+    }
+
+    return out.join("\n");
+}
+
+// Ping roles are named after the repo: "Quartz Update Ping", "Bismuth
+// Pre-Release Ping". Matching on the name means announcing a new mod needs two
+// new roles in Discord and no deploy. A missing role announces without a ping
+// rather than falling back to another mod's role — a silent announcement beats
+// pinging the wrong 27 people.
+//
+// ponytail: name-matched, so renaming a role in Discord breaks the ping
+// silently (the console.error is the only signal). Swap in an explicit
+// repo -> role-id map if the names turn out to churn.
+function findPingRole(guild, repoName, prerelease) {
+    const wanted = `${repoName} ${prerelease ? "Pre-Release" : "Update"} Ping`;
+    const role = guild?.roles?.cache?.find(r => r.name === wanted);
+    if (!role) console.error(`no role named "${wanted}" — announcing without a ping`);
+    return role?.id ?? null;
+}
+
+// Components V2 needs the ping as its own text component; omit it entirely
+// when there is no role to ping.
+function pingComponents(pingRole) {
+    return pingRole ? [new TextDisplayBuilder().setContent(`<@&${pingRole}>`)] : [];
+}
+
 // Cache webhook payloads so language toggles don't need to hit the GitHub
 // API; falls back to the API after a restart.
 const releaseCache = new Map();
@@ -124,13 +229,18 @@ async function getRelease(repoFullName, tag) {
 }
 
 function buildReleaseMessage(release, repoFullName, lang) {
-    const repoName = repoFullName.split("/")[1];
     const { en, ko } = splitLanguages(release.body);
     if (lang === "ko" && !ko) lang = "en";
     const t = STRINGS[lang];
-    const changelog = (lang === "ko" ? ko : en) || ko || t.noChangelog;
+    const changelog = flattenTables(stripDownloadSection((lang === "ko" ? ko : en) || ko || t.noChangelog));
 
-    const assets = release.assets ?? [];
+    // Releases ship internal files next to the ones people actually download —
+    // Quartz publishes six assets, of which two are for humans. When any asset
+    // carries a label we know, that set is the human-facing one; otherwise list
+    // everything, the best guess for a repo we have no labels for.
+    const allAssets = release.assets ?? [];
+    const labelled = allAssets.filter(a => ASSET_LABELS[a.name]);
+    const assets = labelled.length ? labelled : allAssets;
 
     const title =
         `## ${release.prerelease ? t.prerelease : t.release}\n` +
@@ -142,10 +252,8 @@ function buildReleaseMessage(release, repoFullName, lang) {
             ? assets.map(a => `\`${a.name}\`${ASSET_LABELS[a.name] ? ` — ${ASSET_LABELS[a.name]}` : ""}\n`).join("")
             : `${t.noAssets}\n`);
 
-    const publishedAt = Math.floor(new Date(release.published_at).getTime() / 1000);
-
     const container = new ContainerBuilder()
-        .setAccentColor(release.prerelease ? 0xffa500 : 0x5865f2); // orange for prerelease, purple for stable
+        .setAccentColor(ACCENT[releaseTrack(release)]);
 
     if (ko) {
         // Title with the language toggle as its accessory, top right
@@ -168,9 +276,7 @@ function buildReleaseMessage(release, repoFullName, lang) {
 
     container
         .addTextDisplayComponents(td => td.setContent(downloads))
-        .addTextDisplayComponents(td => td.setContent(`${t.changelog}\n${truncate(changelog, 3500)}`))
-        .addSeparatorComponents(sep => sep)
-        .addTextDisplayComponents(td => td.setContent(`-# ${repoName} > JRP • <t:${publishedAt}:f>`));
+        .addTextDisplayComponents(td => td.setContent(`${t.changelog}\n${truncate(changelog, 3500)}`));
 
     const buttons = new ActionRowBuilder().addComponents(
         // ponytail: 4-asset cap — Discord allows 5 buttons per row and the
@@ -211,15 +317,15 @@ function webhookHandler(client, cfg) {
 
         try {
             const channel = await client.channels.fetch(cfg.channelId);
-            const pingRole = release.prerelease ? PRERELEASE_ROLE_ID : ROLE_ID;
+            const pingRole = findPingRole(channel.guild, repo.name, release.prerelease);
 
             await channel.send({
                 components: [
-                    new TextDisplayBuilder().setContent(`<@&${pingRole}>`),
+                    ...pingComponents(pingRole),
                     ...buildReleaseMessage(release, repo.full_name, "en"),
                 ],
                 flags: MessageFlags.IsComponentsV2,
-                allowedMentions: { roles: [pingRole] },
+                allowedMentions: { roles: pingRole ? [pingRole] : [] },
             });
 
             res.sendStatus(200);
@@ -242,11 +348,13 @@ async function handleLanguageButton(interaction) {
         await interaction.deferUpdate();
 
         const release = await getRelease(repoFullName, tag);
-        const pingRole = release.prerelease ? PRERELEASE_ROLE_ID : ROLE_ID;
+        // Re-render keeps the ping line so the message layout is unchanged;
+        // allowedMentions below stops it from pinging anyone a second time.
+        const pingRole = findPingRole(interaction.guild, repoFullName.split("/")[1], release.prerelease);
 
         await interaction.editReply({
             components: [
-                new TextDisplayBuilder().setContent(`<@&${pingRole}>`),
+                ...pingComponents(pingRole),
                 ...buildReleaseMessage(release, repoFullName, lang),
             ],
             flags: MessageFlags.IsComponentsV2,
@@ -266,4 +374,4 @@ async function handleLanguageButton(interaction) {
     }
 }
 
-module.exports = { verifySignature, splitLanguages, buildReleaseMessage, webhookHandler, handleLanguageButton };
+module.exports = { verifySignature, splitLanguages, stripDownloadSection, flattenTables, releaseTrack, ACCENT, buildReleaseMessage, findPingRole, webhookHandler, handleLanguageButton };

@@ -23,7 +23,7 @@ const announcerCfg = {
 // Guilds is enough to post and to receive button interactions — the announcer
 // never reads message content.
 const announcer = new Client({ intents: [GatewayIntentBits.Guilds] });
-announcer.once("ready", () => console.log(`Announcer logged in as ${announcer.user.tag}`));
+announcer.once("clientReady", () => console.log(`Announcer logged in as ${announcer.user.tag}`));
 announcer.on("interactionCreate", releases.handleLanguageButton);
 
 const aiCfg = aiConfig.load();
@@ -48,7 +48,7 @@ if (aiEnabled) {
         ],
         partials: [Partials.Channel], // needed to receive DMs
     });
-    ai.once("ready", () => console.log(`PrismAI logged in as ${ai.user.tag}`));
+    ai.once("clientReady", () => console.log(`PrismAI logged in as ${ai.user.tag}`));
     ai.on("messageCreate", (message) => {
         chat.handle(ai, message).catch(err => console.error("chat error:", err));
     });
