@@ -301,6 +301,37 @@ function buildReleaseMessage(release, repoFullName, lang) {
     return [container, buttons];
 }
 
+// Every announcement carries a "View on GitHub" button holding the release's
+// own URL, so a message can be matched back to its release without storing any
+// ids. JSON-quoting the needle keeps .../tag/v1.3.2 from matching
+// .../tag/v1.3.20.
+function announcementMatches(message, htmlUrl) {
+    return JSON.stringify(message.components ?? []).includes(JSON.stringify(htmlUrl));
+}
+
+// Re-renders an existing announcement after its release notes change. Returns
+// false when no matching message is in the search window, which is not an
+// error — the release may predate the webhook entirely.
+//
+// ponytail: searches the last 100 messages instead of storing message ids. An
+// edit to a release that has scrolled past that is silently skipped; persist
+// (repo, tag) -> message id if that starts happening.
+async function editAnnouncement(channel, release, components) {
+    const recent = await channel.messages.fetch({ limit: 100 });
+    const target = recent.find(m =>
+        m.author.id === channel.client.user.id && announcementMatches(m, release.html_url)
+    );
+    if (!target) return false;
+
+    await target.edit({
+        components,
+        flags: MessageFlags.IsComponentsV2,
+        // An edit must never re-notify the role the announcement first pinged.
+        allowedMentions: { roles: [] },
+    });
+    return true;
+}
+
 // Express handler for the GitHub release webhook.
 function webhookHandler(client, cfg) {
     return async (req, res) => {
@@ -309,31 +340,44 @@ function webhookHandler(client, cfg) {
         }
 
         const event = req.headers["x-github-event"];
-        if (event !== "release" || req.body.action !== "published") {
+        const action = req.body.action;
+        if (event !== "release" || (action !== "published" && action !== "edited")) {
             return res.sendStatus(200);
         }
 
         const release = req.body.release;
         const repo = req.body.repository;
 
+        // Refresh the cache on both actions, so the language toggle serves the
+        // edited notes rather than the ones published originally.
         releaseCache.set(cacheKey(repo.full_name, release.tag_name), release);
 
         try {
             const channel = await client.channels.fetch(cfg.channelId);
             const pingRole = findPingRole(channel.guild, repo.name, release.prerelease);
+            const components = [
+                ...pingComponents(pingRole),
+                ...buildReleaseMessage(release, repo.full_name, "en"),
+            ];
+
+            if (action === "edited") {
+                if (!await editAnnouncement(channel, release, components)) {
+                    console.warn(`no announcement found for ${repo.full_name}@${release.tag_name}; ignoring edit`);
+                }
+                return res.sendStatus(200);
+            }
 
             await channel.send({
-                components: [
-                    ...pingComponents(pingRole),
-                    ...buildReleaseMessage(release, repo.full_name, "en"),
-                ],
+                components,
                 flags: MessageFlags.IsComponentsV2,
                 allowedMentions: { roles: pingRole ? [pingRole] : [] },
             });
 
             res.sendStatus(200);
         } catch (err) {
-            console.error("Failed to send message:", err);
+            // Editing needs Read Message History on the channel; sending does
+            // not, so the two failures are worth telling apart in the log.
+            console.error(`Failed to ${action === "edited" ? "edit" : "send"} message:`, err);
             res.sendStatus(500);
         }
     };
@@ -377,4 +421,4 @@ async function handleLanguageButton(interaction) {
     }
 }
 
-module.exports = { verifySignature, splitLanguages, stripDownloadSection, flattenTables, releaseTrack, ACCENT, buildReleaseMessage, findPingRole, webhookHandler, handleLanguageButton };
+module.exports = { verifySignature, splitLanguages, stripDownloadSection, flattenTables, releaseTrack, ACCENT, buildReleaseMessage, findPingRole, announcementMatches, webhookHandler, handleLanguageButton };

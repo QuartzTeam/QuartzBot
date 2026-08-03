@@ -4,7 +4,7 @@ const assert = require("node:assert");
 
 const {
     splitLanguages, stripDownloadSection, flattenTables,
-    releaseTrack, ACCENT, buildReleaseMessage, findPingRole,
+    releaseTrack, ACCENT, buildReleaseMessage, findPingRole, announcementMatches,
 } = require("./releases");
 
 // Mirrors the server's role list; Array#find stands in for a discord.js Collection.
@@ -218,6 +218,27 @@ test("the track drives the container's accent colour", () => {
     assert.strictEqual(accentOf({ prerelease: true, tag_name: "v2.0.0-beta-1" }), ACCENT.beta);
     assert.strictEqual(accentOf({ prerelease: false, tag_name: "v2.0.0" }), ACCENT.stable);
     assert.notStrictEqual(ACCENT.alpha, ACCENT.beta);
+});
+
+test("an announcement is matched back to its release by the GitHub link", () => {
+    const url = "https://github.com/PrismMods/Bismuth/releases/tag/v1.3.2";
+    const release = fakeRelease(
+        [{ name: "Bismuth.zip", browser_download_url: "https://example.com/Bismuth.zip" }],
+        undefined,
+        { html_url: url }
+    );
+    const message = {
+        components: buildReleaseMessage(release, "PrismMods/Bismuth", "en").map(c => c.toJSON()),
+    };
+
+    assert.ok(announcementMatches(message, url));
+    // A tag sharing the prefix must not match, in either direction.
+    assert.ok(!announcementMatches(message, url + "0"));
+    assert.ok(!announcementMatches(message, "https://github.com/PrismMods/Sapphire/releases/tag/v1.0.0-a2"));
+});
+
+test("a message with no components matches nothing", () => {
+    assert.ok(!announcementMatches({}, "https://github.com/PrismMods/Bismuth/releases/tag/v1.3.2"));
 });
 
 test("each repo pings its own role, stable and prerelease", () => {

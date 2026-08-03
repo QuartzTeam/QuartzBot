@@ -5,9 +5,12 @@
 //   node scripts/fake-release.js v1.2.3                 -> custom tag
 //   node scripts/fake-release.js v1.2.3 --stable
 //   node scripts/fake-release.js --repo=PrismMods/Bismuth
+//   node scripts/fake-release.js v1.2.3 --edited
 //
 // The --repo form is how you check a new mod's ping role and download buttons
-// before pointing its real webhook at the bot.
+// before pointing its real webhook at the bot. --edited replays the same tag
+// as an edit, which should rewrite the existing announcement in place rather
+// than post a second one.
 require("dotenv").config();
 const crypto = require("crypto");
 
@@ -19,6 +22,7 @@ if (!secret) {
 
 const tag = process.argv[2] && !process.argv[2].startsWith("--") ? process.argv[2] : "v0.0.0-test-1";
 const prerelease = !process.argv.includes("--stable");
+const edited = process.argv.includes("--edited");
 
 const repoArg = process.argv.find(a => a.startsWith("--repo="));
 const repoFullName = repoArg ? repoArg.slice("--repo=".length) : "PrismMods/Quartz";
@@ -34,7 +38,7 @@ const assets = repoName === "Quartz"
     : [{ name: `${repoName}.zip`, browser_download_url: `https://example.com/${repoName}.zip` }];
 
 const payload = {
-    action: "published",
+    action: edited ? "edited" : "published",
     release: {
         name: `${tag} — Local webhook test`,
         tag_name: tag,
@@ -54,7 +58,9 @@ const payload = {
             "---",
             "",
             "### Fixed",
-            "- Test entry: this message was posted by scripts/fake-release.js.",
+            edited
+                ? `- Test entry: EDITED at ${new Date().toLocaleTimeString()} — the announcement should have changed in place.`
+                : "- Test entry: this message was posted by scripts/fake-release.js.",
             "",
             // This table should survive as bullets — Discord cannot render
             // tables, so it exercises flattenTables.
