@@ -16,13 +16,16 @@ const ACCENT = {
     stable: 0x5865f2,
 };
 
-// Prereleases are tagged by track — v2.0.0-alpha-103, v2.0.0-beta-1, and the
-// rolling latest-alpha / latest-beta pointers — so the tag says which one a
-// build is on. A prerelease naming neither track keeps the alpha colour: an
-// unfamiliar repo's prerelease is at least as unfinished as an alpha.
+// Prereleases are tagged by track, in two conventions: Quartz spells it out
+// (v2.0.0-beta-1, plus rolling latest-alpha / latest-beta pointers) while
+// Sapphire abbreviates (v1.0.0-a2, so betas will be v1.0.0-b1). Match both.
+// A prerelease naming neither track keeps the alpha colour: an unfamiliar
+// repo's prerelease is at least as unfinished as an alpha.
+const BETA_TAG = /beta|-b\d/i;
+
 function releaseTrack(release) {
     if (!release.prerelease) return "stable";
-    return /beta/i.test(release.tag_name || "") ? "beta" : "alpha";
+    return BETA_TAG.test(release.tag_name || "") ? "beta" : "alpha";
 }
 
 // Friendly names for assets we know by filename. Anything not listed here —

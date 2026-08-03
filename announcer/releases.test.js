@@ -193,11 +193,17 @@ test("prose containing a pipe is not mistaken for a table", () => {
 test("alpha, beta and stable are three separate tracks", () => {
     const pre = tag => releaseTrack({ prerelease: true, tag_name: tag });
 
+    // Quartz spells the track out.
     assert.strictEqual(pre("v2.0.0-alpha-103"), "alpha");
     assert.strictEqual(pre("v2.0.0-beta-1"), "beta");
     // The rolling pointer tags the repo also publishes.
     assert.strictEqual(pre("latest-alpha"), "alpha");
     assert.strictEqual(pre("latest-beta"), "beta");
+    // Sapphire abbreviates it.
+    assert.strictEqual(pre("v1.0.0-a2"), "alpha");
+    assert.strictEqual(pre("v1.0.0-b1"), "beta");
+    // "-b" without a digit is a word, not a track.
+    assert.strictEqual(pre("v1.0.0-build-3"), "alpha");
     // A prerelease naming no track is treated as the least finished.
     assert.strictEqual(pre("v0.0.0-test-1"), "alpha");
     assert.strictEqual(releaseTrack({ prerelease: false, tag_name: "v1.3.2" }), "stable");
